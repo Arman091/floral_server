@@ -22,3 +22,14 @@ In case if you Clone project Run command Node server
 #### How to Use
 ###### There are 4 Api's Which Gives 20 Fake  Products, Api which You can Use to integrate
 1. #### Api to get All Products (GET)
+    https://floralcart.onrender.com/products
+    
+2. #### Api to login (POST) 
+    https://floralcart.onrender.com/login
+    
+3. #### Api to signup (POST)
+   https://floralcart.onrender.com/signup
+ 
+4. #### Api to get Product By Product ID (GET)
+    https://floralcart.onrender.com/id
+    
