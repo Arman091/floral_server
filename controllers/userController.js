@@ -1,6 +1,7 @@
 import userModel from "../model/userSchema.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { sendNotification } from "../services/notificationService.js";
 
 /**
  * Handles successful authentication by generating tokens, setting cookies,
@@ -107,6 +108,15 @@ export const userSignup = async (req, res) => {
       res,
       newUser
     );
+
+    // Send a welcome notification asynchronously
+    if (safeUser.deviceToken) {
+      sendNotification(
+        safeUser.deviceToken,
+        "Welcome to Floral Cart 🌸",
+        `Hi ${safeUser.firstName}, thank you for signing up! We're glad to have you.`
+      ).catch((err) => console.error("Failed to send welcome notification:", err));
+    }
 
     return res.status(201).json({
       accessToken,
