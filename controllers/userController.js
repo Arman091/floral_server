@@ -1,16 +1,117 @@
 import userModel from "../model/userSchema.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+
+/**
+ * Handles successful authentication by generating tokens, setting cookies,
+ * and returning a sanitized user object.
+ * @param {object} res - The Express response object.
+ * @param {object} user - The Mongoose user document.
+ * @returns {Promise<{accessToken: string, user: object}>}
+ */
+const handleSuccessfulAuth = async (res, user) => {
+  const accessSecret = process.env?.JWT_ACCESS_SECRET;
+  const refreshSecret = process.env?.JWT_REFRESH_SECRET;
+
+  if (!accessSecret || !refreshSecret) {
+    throw new Error("JWT secrets are not configured.");
+  }
+
+  const accessToken = jwt.sign(
+    { _id: user._id, email: user.email, role: user.role },
+    accessSecret,
+    { expiresIn: "15m" }
+  );
+
+  const refreshToken = jwt.sign({ _id: user._id }, refreshSecret, {
+    expiresIn: "7d",
+  });
+
+  user.refreshToken = refreshToken;
+  await user.save();
+
+  // Convert to a plain object to safely manipulate
+  const safeUser = user.toObject({ versionKey: false });
+  delete safeUser.password;
+  delete safeUser.refreshToken;
+  // Add uid to the response object, which is a copy of the database _id
+  safeUser.uid = safeUser._id;
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
+  return { accessToken, user: safeUser };
+};
+
 export const userSignup = async (req, res) => {
   try {
-    const exist = await userModel.findOne({ userName: req.body.userName });
-    if (exist) {
-      return res.status(404).json({ message: "This userName already exist" });
+    const {
+      firstName,
+      lastName,
+      userName,
+      email,
+      password,
+      role,
+      countryCode,
+      countryCallingCode,
+      formattedPhone,
+      deviceToken,
+    } = req.body ?? {};
+
+    const existingEmail = await userModel
+      .findOne({ email })
+      .select("_id")
+      .lean();
+    if (existingEmail?._id) {
+      return res.status(409).json({ message: "Email already registered." });
     }
 
-    const user = req.body;
-    const newUser = new userModel(user);
-    await newUser.save();
+    const existingPhone = await userModel
+      .findOne({ phone: formattedPhone })
+      .select("_id")
+      .lean();
+    if (existingPhone?._id) {
+      return res.status(409).json({ message: "Phone number already registered." });
+    }
 
-    res.status(200).json({ message: user });
+    const existingUsername = await userModel
+      .findOne({ userName })
+      .select("_id")
+      .lean();
+    if (existingUsername?._id) {
+      return res.status(409).json({ message: "Username already exists." });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const newUser = new userModel({
+      firstName,
+      lastName,
+      userName,
+      email,
+      password: hashedPassword,
+      role,
+      countryCode,
+      countryCallingCode,
+      phone: formattedPhone,
+      deviceToken,
+    });
+
+    // Handle token generation and response
+    const { accessToken, user: safeUser } = await handleSuccessfulAuth(
+      res,
+      newUser
+    );
+
+    return res.status(201).json({
+      accessToken,
+      user: safeUser,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -18,15 +119,32 @@ export const userSignup = async (req, res) => {
 
 export const userLogin = async (req, res) => {
   try {
-    const email = req.body.email;
-    const password = req.body.password;
-    let user = await userModel.findOne({ email: email, password: password });
-    if (user) {
-      return res.status(200).json({ data: user });
-    } else {
-      return res.status(401).json("Invalid Login");
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ message: "Email and password are required." });
     }
+
+    const user = await userModel.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials." });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials." });
+    }
+
+    // Handle token generation and response
+    const { accessToken, user: safeUser } = await handleSuccessfulAuth(res, user);
+
+    return res.status(200).json({
+      accessToken,
+      user: safeUser,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
