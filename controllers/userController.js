@@ -10,7 +10,7 @@ import { sendNotification } from "../services/notificationService.js";
  * @param {object} user - The Mongoose user document.
  * @returns {Promise<{accessToken: string, user: object}>}
  */
-const handleSuccessfulAuth = async (res, user) => {
+export const handleSuccessfulAuth = async (res, user) => {
   const accessSecret = process.env?.JWT_ACCESS_SECRET;
   const refreshSecret = process.env?.JWT_REFRESH_SECRET;
 
@@ -134,17 +134,21 @@ export const userLogin = async (req, res) => {
     if (!email || !password) {
       return res
         .status(400)
-        .json({ message: "Email and password are required." });
+        .json({ code: "BAD_REQUEST", message: "Email and password are required." });
     }
 
     const user = await userModel.findOne({ email });
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials." });
+      return res
+        .status(401)
+        .json({ code: "INVALID_CREDENTIALS", message: "Invalid credentials." });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials." });
+      return res
+        .status(401)
+        .json({ code: "INVALID_CREDENTIALS", message: "Invalid credentials." });
     }
 
     // Handle token generation and response
@@ -154,6 +158,87 @@ export const userLogin = async (req, res) => {
       accessToken,
       user: safeUser,
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const refreshAccessToken = async (req, res) => {
+  try {
+    const oldToken = req.cookies?.refreshToken;
+
+    if (!oldToken) {
+      return res
+        .status(401)
+        .json({ code: "TOKEN_MISSING", message: "Refresh token not found." });
+    }
+
+    const refreshSecret = process.env.JWT_REFRESH_SECRET;
+    const accessSecret = process.env.JWT_ACCESS_SECRET;
+
+    if (!refreshSecret || !accessSecret) {
+      return res
+        .status(500)
+        .json({ code: "SERVER_ERROR", message: "JWT secrets are not configured." });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(oldToken, refreshSecret);
+    } catch (err) {
+      return res
+        .status(403)
+        .json({ code: "INVALID_REFRESH", message: "Invalid or expired refresh token." });
+    }
+
+    const user = await userModel.findById(decoded._id);
+
+    // 🔴 TOKEN REUSE DETECTION
+    if (!user) {
+      return res.status(403).json({ code: "USER_NOT_FOUND", message: "User not found." });
+    }
+
+    if (user.refreshToken !== oldToken) {
+      // Possible token theft / reuse attack
+      user.refreshToken = null;
+      await user.save();
+
+      return res.status(403).json({
+        code: "TOKEN_REUSE_DETECTED",
+        message: "Refresh token reuse detected. Please login again.",
+      });
+    }
+
+    // 🟢 GENERATE NEW TOKENS (ROTATION)
+    const newAccessToken = jwt.sign(
+      { _id: user._id, email: user.email, role: user.role },
+      accessSecret,
+      { expiresIn: "15m" }
+    );
+
+    const newRefreshToken = jwt.sign(
+      { _id: user._id },
+      refreshSecret,
+      { expiresIn: "7d" }
+    );
+
+    // 🟢 UPDATE DB
+    user.refreshToken = newRefreshToken;
+    await user.save();
+
+    // 🟢 SET NEW COOKIE
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    // 🟢 SEND RESPONSE
+    return res.status(200).json({
+      accessToken: newAccessToken,
+    });
+
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
