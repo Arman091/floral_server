@@ -1,5 +1,5 @@
 import admin from "firebase-admin";
-import serviceAccount from "./floral-cart-service-account-key.json" with { type: "json" };
+import serviceAccount from "./floral-cart-service-account-key.json" assert { type: "json" };
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),

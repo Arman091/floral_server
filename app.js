@@ -9,10 +9,15 @@ import router from "./routes/route.js";
 const app = express();
 dotenv.config();
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://flora-client-pink.vercel.app",
+];
+
 // More specific CORS configuration for development
 app.use(
   cors({
-    origin: "http://localhost:3000", // Allow requests from your frontend
+    origin: allowedOrigins, // Allow requests from your frontend
     credentials: true, // Allow cookies and authorization headers
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],

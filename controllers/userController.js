@@ -63,6 +63,28 @@ export const userSignup = async (req, res) => {
       deviceToken,
     } = req.body ?? {};
 
+    const missingFields = [];
+    if (!firstName) missingFields.push("firstName");
+    if (!lastName) missingFields.push("lastName");
+    if (!userName) missingFields.push("userName");
+    if (!email) missingFields.push("email");
+    if (!password) missingFields.push("password");
+    if (!formattedPhone) missingFields.push("formattedPhone");
+
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        code: "BAD_REQUEST",
+        message: `Missing required fields: ${missingFields.join(", ")}`,
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        code: "BAD_REQUEST",
+        message: "Password must be at least 6 characters.",
+      });
+    }
+
     const existingEmail = await userModel
       .findOne({ email })
       .select("_id")
@@ -123,9 +145,11 @@ export const userSignup = async (req, res) => {
       user: safeUser,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
+
+
 
 export const userLogin = async (req, res) => {
   try {
@@ -199,7 +223,8 @@ export const refreshAccessToken = async (req, res) => {
     }
 
     if (user.refreshToken !== oldToken) {
-      // Possible token theft / reuse attack
+      // Security lockout: This protects the user from stolen token replay attacks 
+      // by invalidating the token family if a reused refresh token is detected.
       user.refreshToken = null;
       await user.save();
 
@@ -243,3 +268,119 @@ export const refreshAccessToken = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+export const logout = async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken;
+
+    if (!token) {
+      // If no token, the user is already effectively logged out.
+      return res.status(200).json({
+        code: "LOGOUT_SUCCESS",
+        message: "Logged out successfully.",
+      });
+    }
+
+    // Find the user and invalidate their refresh token in the database
+    const user = await userModel.findOne({ refreshToken: token });
+    if (user) {
+      user.refreshToken = null;
+      await user.save();
+    }
+
+    // Clear the cookie from the client's browser
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    });
+
+    return res.status(200).json({
+      code: "LOGOUT_SUCCESS",
+      message: "Logged out successfully.",
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const getProfile = async (req, res) => {
+  try {
+    // This assumes an authentication middleware has run and attached the user's ID to req.user
+    const userId = req.user?._id;
+    console.log(req.body,"body");
+    if (!userId) {
+      return res.status(401).json({ code: "UNAUTHORIZED", message: "Authentication required." });
+    }
+
+    // Find user and exclude sensitive fields directly from the query
+    const user = await userModel.findById(userId).select("-password -refreshToken -__v");
+
+    if (!user) {
+      return res.status(404).json({ code: "USER_NOT_FOUND", message: "User profile not found." });
+    }
+
+    return res.status(200).json({
+      code: "PROFILE_FETCHED",
+      message: "User profile fetched successfully.",
+      data: user,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateProfile = async (req, res) => {
+  try {
+    // This assumes an authentication middleware has run and attached the user's ID to req.user
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ code: "UNAUTHORIZED", message: "Authentication required." });
+    }
+
+    const { firstName, lastName, userName, email, phone } = req.body;
+
+    const user = await userModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ code: "USER_NOT_FOUND", message: "User not found." });
+    }
+
+    // Build an object with only the fields that are being updated
+    const updates = {};
+    if (firstName) updates.firstName = firstName;
+    if (lastName) updates.lastName = lastName;
+    if (userName) updates.userName = userName.toLowerCase();
+    if (email) updates.email = email.toLowerCase();
+    if (phone) updates.phone = phone;
+
+    // Uniqueness validation for fields that must be unique
+    if (updates.email && updates.email !== user.email && (await userModel.findOne({ email: updates.email }))) {
+      return res.status(409).json({ code: "EMAIL_EXISTS", message: "Email is already in use." });
+    }
+    if (updates.userName && updates.userName !== user.userName && (await userModel.findOne({ userName: updates.userName }))) {
+      return res.status(409).json({ code: "USERNAME_EXISTS", message: "Username is already in use." });
+    }
+    if (updates.phone && updates.phone !== user.phone && (await userModel.findOne({ phone: updates.phone }))) {
+      return res.status(409).json({ code: "PHONE_EXISTS", message: "Phone number is already in use." });
+    }
+
+    // Apply updates and save the user
+    Object.assign(user, updates);
+    const updatedUser = await user.save();
+
+    // Create a safe user object for the response
+    const safeUser = updatedUser.toObject();
+    delete safeUser.password;
+    delete safeUser.refreshToken;
+    delete safeUser.__v;
+
+    return res.status(200).json({
+      code: "PROFILE_UPDATED",
+      message: "Profile updated successfully.",
+      data: safeUser,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
