@@ -29,14 +29,35 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
   },
   phone: {
-    type: Number,
+    type: String,
     required: true,
+    trim: true,
+    unique: true,
   },
   password: {
     type: String,
     required: true,
     min: 6,
-    max: 20,
+  },
+  role: {
+    type: String,
+    enum: ["Admin", "regular"],
+    default: "regular",
+  },
+  countryCode: {
+    type: String,
+    trim: true,
+  },
+  countryCallingCode: {
+    type: String,
+    trim: true,
+  },
+  deviceToken: {
+    type: String,
+    required:false,
+  },
+  refreshToken: {
+    type: String,
   },
 });
 
