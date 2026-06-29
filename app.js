@@ -14,11 +14,9 @@ const allowedOrigins = [
   "https://flora-client-pink.vercel.app",
 ];
 
-// More specific CORS configuration for development
 app.use(
   cors({
-    origin: allowedOrigins, // Allow requests from your frontend
-    credentials: true, // Allow cookies and authorization headers
+    origin: allowedOrigins,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
